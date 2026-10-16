@@ -1,41 +1,11 @@
 """Offline tests of the deep agent wiring, streaming output and plan approval,
 using a scripted chat model instead of OpenAI."""
 
-from typing import Any
-
 import pytest
-from langchain_core.language_models import BaseChatModel
+from helpers import ScriptedModel, todos, tool_call
 from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 
 from ticket_agent import build_agent, build_planning_agent, new_thread, run_with_plan_approval, stream_agent
-
-
-class ScriptedModel(BaseChatModel):
-    """Returns pre-defined AI messages in order, ignoring the input."""
-
-    responses: list[AIMessage]
-    calls: int = 0
-
-    @property
-    def _llm_type(self) -> str:
-        return "scripted"
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedModel":
-        return self
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        response = self.responses[self.calls]
-        self.calls += 1
-        return ChatResult(generations=[ChatGeneration(message=response)])
-
-
-def tool_call(name: str, args: dict, call_id: str) -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": call_id}])
-
-
-def todos(*items: tuple[str, str]) -> dict:
-    return {"todos": [{"content": content, "status": status} for content, status in items]}
 
 
 def test_agent_streams_tool_calls_results_and_answer(service, capsys):

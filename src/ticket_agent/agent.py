@@ -38,8 +38,12 @@ PLANNING_PROMPT = """
 
 ## Planning
 Before calling any other tool, call `write_todos` once with your complete step-by-step
-plan for the user's request. Wait for the plan to be approved before executing it.
-If the plan is rejected, read the feedback, revise the plan and call `write_todos` again."""
+plan for the user's request. The user reviews every `write_todos` call before it runs:
+- If the `write_todos` call succeeds, the user has APPROVED the plan. Immediately execute
+  it with the tools, step by step. Do not ask for confirmation again and do not repeat the
+  plan; finish with the final answer.
+- If the call is rejected, read the user's feedback, revise the plan and call
+  `write_todos` again with the revised plan."""
 
 
 def build_tools(ticket_service: TicketService | None = None) -> list[BaseTool]:

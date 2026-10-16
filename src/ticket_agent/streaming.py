@@ -1,6 +1,7 @@
-"""Stream an agent run and print reasoning, answer tokens, tool calls and tool results."""
+"""Stream an agent run as typed events, or print them (reasoning, answer tokens, tool calls, tool results)."""
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -10,9 +11,9 @@ DIM, CYAN, YELLOW, RESET = "\033[2m", "\033[36m", "\033[33m", "\033[0m"
 MAX_RESULT_CHARS = 400
 
 
-def _source(namespace: tuple[str, ...]) -> str:
-    """'' for the main agent, '[subagent] ' for events from a `task` subagent."""
-    return "[subagent] " if any(s.startswith("tools:") for s in namespace) else ""
+def _is_subagent(namespace: tuple[str, ...]) -> bool:
+    """True for events from a subagent spawned by the `task` tool."""
+    return any(segment.startswith("tools:") for segment in namespace)
 
 
 def _content_parts(message: AIMessage) -> list[tuple[str, str]]:
@@ -69,10 +70,68 @@ class _Printer:
         self._newline()
 
 
+def iter_agent_events(
+    agent: Any, payload: str | dict | Command, config: dict[str, Any]
+) -> Iterator[dict[str, Any]]:
+    """Run the agent and yield typed events as they stream.
+
+    Event shapes (every event also has `subagent: bool`):
+        {"type": "reasoning", "text": ...}   reasoning-summary text
+        {"type": "token", "text": ...}       answer text
+        {"type": "tool_call", "id": ..., "name": ..., "args": {...}}
+        {"type": "tool_result", "tool_call_id": ..., "name": ..., "content": ...}
+
+    Args:
+        agent: A compiled deep agent (with a checkpointer).
+        payload: A user message, an input dict, or a Command(resume=...).
+        config: Thread config, e.g. ticket_agent.new_thread().
+    """
+    if isinstance(payload, str):
+        payload = {"messages": [{"role": "user", "content": payload}]}
+
+    for chunk in agent.stream(
+        payload,
+        config=config,
+        stream_mode=["updates", "messages"],
+        subgraphs=True,
+        version="v2",
+    ):
+        subagent = _is_subagent(chunk["ns"])
+
+        if chunk["type"] == "messages":
+            message, _metadata = chunk["data"]
+            if isinstance(message, AIMessage):  # chunks while streaming; a full message if the model didn't stream
+                for kind, text in _content_parts(message):
+                    yield {"type": "reasoning" if kind == "reasoning" else "token", "text": text, "subagent": subagent}
+
+        elif chunk["type"] == "updates":
+            for update in chunk["data"].values():
+                if not isinstance(update, dict) or not isinstance(update.get("messages"), list):
+                    continue
+                for message in update["messages"]:
+                    if isinstance(message, AIMessage):
+                        for call in message.tool_calls:
+                            yield {
+                                "type": "tool_call",
+                                "id": call.get("id"),
+                                "name": call["name"],
+                                "args": call["args"],
+                                "subagent": subagent,
+                            }
+                    elif isinstance(message, ToolMessage):
+                        yield {
+                            "type": "tool_result",
+                            "tool_call_id": message.tool_call_id,
+                            "name": message.name,
+                            "content": message.content,
+                            "subagent": subagent,
+                        }
+
+
 def stream_agent(
     agent: Any, payload: str | dict | Command, config: dict[str, Any]
 ) -> tuple[Interrupt, ...]:
-    """Run the agent with streaming output.
+    """Run the agent with streaming output printed to the console / notebook.
 
     Args:
         agent: A compiled deep agent (with a checkpointer).
@@ -82,35 +141,15 @@ def stream_agent(
     Returns:
         Pending interrupts (e.g. a plan waiting for approval); empty when the run finished.
     """
-    if isinstance(payload, str):
-        payload = {"messages": [{"role": "user", "content": payload}]}
-
     printer = _Printer()
-    for chunk in agent.stream(
-        payload,
-        config=config,
-        stream_mode=["updates", "messages"],
-        subgraphs=True,
-        version="v2",
-    ):
-        source = _source(chunk["ns"])
-
-        if chunk["type"] == "messages":
-            message, _metadata = chunk["data"]
-            if isinstance(message, AIMessage):  # chunks while streaming; a full message if the model didn't stream
-                for kind, text in _content_parts(message):
-                    printer.stream_text(source, kind, text)
-
-        elif chunk["type"] == "updates":
-            for node, update in chunk["data"].items():
-                if not isinstance(update, dict) or not isinstance(update.get("messages"), list):
-                    continue
-                for message in update["messages"]:
-                    if isinstance(message, AIMessage):
-                        for call in message.tool_calls:
-                            printer.line(f"{CYAN}🔧 {source}{call['name']}({_short(call['args'])}){RESET}")
-                    elif isinstance(message, ToolMessage):
-                        printer.line(f"{YELLOW}   ↳ {source}{message.name}: {_short(message.content)}{RESET}")
+    for event in iter_agent_events(agent, payload, config):
+        source = "[subagent] " if event["subagent"] else ""
+        if event["type"] in ("reasoning", "token"):
+            printer.stream_text(source, "reasoning" if event["type"] == "reasoning" else "text", event["text"])
+        elif event["type"] == "tool_call":
+            printer.line(f"{CYAN}🔧 {source}{event['name']}({_short(event['args'])}){RESET}")
+        elif event["type"] == "tool_result":
+            printer.line(f"{YELLOW}   ↳ {source}{event['name']}: {_short(event['content'])}{RESET}")
 
     printer.finish()
     return agent.get_state(config).interrupts

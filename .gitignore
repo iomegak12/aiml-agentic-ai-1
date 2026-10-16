@@ -12,3 +12,20 @@ wheels/
 # Environment and local databases
 .env
 *.db
+
+# Runtime data and logs
+data/
+logs/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+node_modules
+
+# Web app
+web/node_modules/
+web/dist/
+web/.vite/

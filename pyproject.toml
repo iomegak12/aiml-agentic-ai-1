@@ -1,0 +1,27 @@
+[project]
+name = "learning-agentic-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "deepagents>=0.7.26",
+    "langchain-openai>=1.7.2",
+    "pydantic>=2.14.1",
+    "python-dotenv>=1.2.4",
+    "sqlalchemy>=2.1.4",
+    "tzdata>=2026.5",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "pytest>=9.1.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.16,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["it_tickets", "agent_tools", "ticket_agent"]
